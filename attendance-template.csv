@@ -1,0 +1,11 @@
+match,side,team1_year,team1_house,score1,team2_year,team2_house,score2
+1,left,10,Da Vinci,,8,Attenborough,
+2,left,10,Einstein,,9,Attenborough,
+3,left,8,Da Vinci,,10,Attenborough,
+4,left,9,Da Vinci,,9,Kahlo,
+5,left,7,Anning,,10,Kahlo,
+6,right,10,Anning,,9,Einstein,
+7,right,8,Kahlo,,8,Einstein,
+8,right,9,Anning,,7,Einstein,
+9,right,7,Attenborough,,8,Anning,
+10,right,7,Kahlo,,7,Da Vinci,
