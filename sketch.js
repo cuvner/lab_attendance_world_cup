@@ -1,10 +1,10 @@
 // House colours
 const HC = {
-  Anning: { f: "#5DCAA5", t: "#085041" },
-  Einstein: { f: "#85B7EB", t: "#0C447C" },
+  Anning: { f: "#2FB85F", t: "#063A1D" },
+  Einstein: { f: "#E94B4B", t: "#5A0808" },
   Kahlo: { f: "#FAC775", t: "#633806" },
   Attenborough: { f: "#97C459", t: "#27500A" },
-  "Da Vinci": { f: "#ED93B1", t: "#72243E" },
+  "Da Vinci": { f: "#3B82F6", t: "#082D63" },
 };
 
 // Default matches shown until the Google Sheet loads.
@@ -25,6 +25,7 @@ let MATCHES_R = [
 ];
 
 let ALL_MATCHES = [];
+let ROUND_GROUPS = [];
 resetMatchIds();
 
 let CW = 860;
@@ -39,15 +40,16 @@ const DATA_REFRESH_SECS = 30;
 let ZONE = { x1: 0, x2: CW, y1: 0, y2: CH };
 
 // Paste your published Google Sheet CSV link here.
-// Required columns:
+// Preferred columns for spreadsheet-controlled rounds:
+// round,draw_date,draw_time,team_year,team_house,attendance
+// The online spreadsheet controls ordering and match draws.
+// Rows are paired in their sheet order: 1v2, 3v4, 5v6...
+// Legacy explicit-match columns are still supported:
 // match,side,team1_year,team1_house,score1,team2_year,team2_house,score2
-// side can be left/right or L/R. If side is blank, matches are split evenly.
-// Example rows:
-// match,side,team1_year,team1_house,score1,team2_year,team2_house,score2
-// 1,left,10,Da Vinci,94.5,8,Attenborough,88.2
-// 2,left,10,Einstein,91,9,Attenborough,90.5
 const GOOGLE_SHEET_CSV_URL =
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vRWZdyZnJNHIb1bXEIHlAljq7qyjlrROF0Y8wChxn_sksdTSdNL2evHTvWECGznbE3oufIG7Tw5heB2/pub?output=csv";
+
+let currentRoundLabel = "ROUND 1";
 
 let focusMatch = 0;
 let autoRotate = true;
@@ -64,6 +66,7 @@ let bvy = 1.8;
 
 let footballImg;
 let grassImg;
+let houseLogos = {};
 let titleFontReady = false;
 
 function setup() {
@@ -119,11 +122,16 @@ function draw() {
 
   moveFootball();
 
-  drawSide(MATCHES_L, 8, true);
-  drawSide(MATCHES_R, CW - 8, false);
+  if (ROUND_GROUPS.length > 1) {
+    drawBracketRounds();
+  } else {
+    drawSide(MATCHES_L, 8, true);
+    drawSide(MATCHES_R, CW - 8, false);
+  }
   drawCentreDetails();
   drawFootball(bx, by, BR);
   drawFocusGlow();
+  drawWinnersBanner();
   drawCountdown();
   maybeRefreshAttendanceData();
 }
@@ -143,6 +151,17 @@ function loadAssets() {
     "grass.png",
   ], (img) => {
     grassImg = img;
+  });
+
+  loadHouseLogo("Da Vinci", ["images/DaVinci.png", "DaVinci.png"]);
+  loadHouseLogo("Kahlo", ["images/Kahlo.png", "Kahlo.png"]);
+  loadHouseLogo("Anning", ["images/Anning.png", "Anning.png"]);
+  loadHouseLogo("Einstein", ["images/Einstein logo.png", "Einstein logo.png"]);
+}
+
+function loadHouseLogo(house, paths) {
+  loadImageFromPaths(paths, (img) => {
+    houseLogos[house] = img;
   });
 }
 
@@ -403,15 +422,7 @@ function gvizResponseToRows(response) {
 function hasRequiredHeaders(row) {
   const headers = row.map(normaliseHeader);
 
-  return (
-    findColumn(headers, ["match", "matchnumber", "matchno"]) !== -1 &&
-    findColumn(headers, ["team1year", "t1year", "year1", "yr1"]) !== -1 &&
-    findColumn(headers, ["team1house", "t1house", "house1"]) !== -1 &&
-    findColumn(headers, ["score1", "team1score", "attendance1", "team1attendance", "s1"]) !== -1 &&
-    findColumn(headers, ["team2year", "t2year", "year2", "yr2"]) !== -1 &&
-    findColumn(headers, ["team2house", "t2house", "house2"]) !== -1 &&
-    findColumn(headers, ["score2", "team2score", "attendance2", "team2attendance", "s2"]) !== -1
-  );
+  return hasExplicitMatchHeaders(headers) || hasRoundTeamHeaders(headers);
 }
 
 function addCacheBuster(url) {
@@ -425,6 +436,41 @@ function applyAttendanceRows(rows) {
   }
 
   const headers = rows[0].map(normaliseHeader);
+  if (hasRoundTeamHeaders(headers)) {
+    return applyRoundTeamRows(rows, headers);
+  }
+
+  if (hasExplicitMatchHeaders(headers)) {
+    return applyExplicitMatchRows(rows, headers);
+  }
+
+  throw new Error(
+    "CSV needs either round/team columns or explicit match columns",
+  );
+}
+
+function hasExplicitMatchHeaders(headers) {
+  return (
+    findColumn(headers, ["match", "matchnumber", "matchno"]) !== -1 &&
+    findColumn(headers, ["team1year", "t1year", "year1", "yr1"]) !== -1 &&
+    findColumn(headers, ["team1house", "t1house", "house1"]) !== -1 &&
+    findColumn(headers, ["score1", "team1score", "attendance1", "team1attendance", "s1"]) !== -1 &&
+    findColumn(headers, ["team2year", "t2year", "year2", "yr2"]) !== -1 &&
+    findColumn(headers, ["team2house", "t2house", "house2"]) !== -1 &&
+    findColumn(headers, ["score2", "team2score", "attendance2", "team2attendance", "s2"]) !== -1
+  );
+}
+
+function hasRoundTeamHeaders(headers) {
+  return (
+    findColumn(headers, ["round", "roundnumber", "worldcupround"]) !== -1 &&
+    findColumn(headers, ["teamyear", "year", "yr"]) !== -1 &&
+    findColumn(headers, ["teamhouse", "house"]) !== -1 &&
+    findColumn(headers, ["attendance", "score", "attendancescore"]) !== -1
+  );
+}
+
+function applyExplicitMatchRows(rows, headers) {
   const matchCol = findColumn(headers, ["match", "matchnumber", "matchno"]);
   const sideCol = findColumn(headers, ["side", "bracketside"]);
   const team1YearCol = findColumn(headers, [
@@ -464,20 +510,6 @@ function applyAttendanceRows(rows) {
     "s2",
   ]);
 
-  if (
-    matchCol === -1 ||
-    team1YearCol === -1 ||
-    team1HouseCol === -1 ||
-    score1Col === -1 ||
-    team2YearCol === -1 ||
-    team2HouseCol === -1 ||
-    score2Col === -1
-  ) {
-    throw new Error(
-      "CSV needs match, team1_year, team1_house, score1, team2_year, team2_house, score2",
-    );
-  }
-
   const parsedMatches = [];
 
   for (let i = 1; i < rows.length; i++) {
@@ -513,9 +545,247 @@ function applyAttendanceRows(rows) {
   }
 
   parsedMatches.sort((a, b) => a.matchNumber - b.matchNumber);
+  currentRoundLabel = "ROUND 1";
   setMatchesFromSheet(parsedMatches);
 
   return parsedMatches.length;
+}
+
+function applyRoundTeamRows(rows, headers) {
+  const roundCol = findColumn(headers, ["round", "roundnumber", "worldcupround"]);
+  const drawDateCol = findColumn(headers, ["drawdate", "date", "fridaydate"]);
+  const drawTimeCol = findColumn(headers, ["drawtime", "time"]);
+  const teamYearCol = findColumn(headers, ["teamyear", "year", "yr"]);
+  const teamHouseCol = findColumn(headers, ["teamhouse", "house"]);
+  const attendanceCol = findColumn(headers, ["attendance", "score", "attendancescore"]);
+  const rounds = new Map();
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const round = cleanText(row[roundCol]);
+    const teamYear = Number.parseInt(row[teamYearCol], 10);
+    const teamHouse = cleanText(row[teamHouseCol]);
+
+    if (!round) {
+      continue;
+    }
+
+    if (!rounds.has(round)) {
+      rounds.set(round, {
+        round,
+        drawDate: drawDateCol === -1 ? "" : cleanText(row[drawDateCol]),
+        drawTime: drawTimeCol === -1 ? "08:30" : cleanText(row[drawTimeCol]) || "08:30",
+        teams: [],
+      });
+    }
+
+    rounds.get(round).teams.push({
+      yr: Number.isNaN(teamYear) ? "" : teamYear,
+      h: teamHouse,
+      attendance: cleanScore(row[attendanceCol]),
+    });
+  }
+
+  const selectedRound = selectActiveRound([...rounds.values()]);
+
+  if (!selectedRound || selectedRound.teams.length < 2) {
+    throw new Error("CSV did not contain enough teams for a round draw");
+  }
+
+  setRoundGroupsFromSheet([...rounds.values()]);
+  const selectedTeams = selectedRound.teams.filter((team) => !isBlankTeam(team));
+  currentRoundLabel = `ROUND ${selectedRound.round}`;
+  setMatchesFromSheet(buildMatchesFromOrderedTeams(selectedTeams));
+
+  return ALL_MATCHES.length;
+}
+
+function setRoundGroupsFromSheet(rounds) {
+  const sortedRounds = rounds
+    .map((round) => ({
+      ...round,
+      drawAt: parseDrawDateTime(round.drawDate, round.drawTime),
+    }))
+    .sort((a, b) => {
+      if (a.drawAt && b.drawAt) return a.drawAt - b.drawAt;
+      return Number.parseFloat(a.round) - Number.parseFloat(b.round);
+    });
+
+  let expectedTeamCount = 0;
+
+  ROUND_GROUPS = sortedRounds.map((round, index) => {
+    const filledTeams = round.teams.filter((team) => !isBlankTeam(team));
+    const isLastRound = index === sortedRounds.length - 1;
+    const isSemiFinalRound = index === sortedRounds.length - 2;
+    const inferredTeamCount =
+      index === 0
+        ? filledTeams.length
+        : max(isLastRound ? 2 : 1, ceil(expectedTeamCount / 2));
+    const targetTeamCount = filledTeams.length > 0 ? filledTeams.length : inferredTeamCount;
+    const teams = padTeamsToCount(filledTeams, targetTeamCount);
+
+    expectedTeamCount = targetTeamCount;
+
+    return {
+      round: round.round,
+      drawDate: round.drawDate,
+      drawTime: round.drawTime,
+      drawAt: round.drawAt,
+      matches: isLastRound
+        ? buildFinalEntries(teams)
+        : buildKnockoutMatchesFromOrderedTeams(teams, isSemiFinalRound),
+    };
+  });
+}
+
+function selectActiveRound(rounds) {
+  const sortedRounds = rounds
+    .map((round) => ({ ...round, drawAt: parseDrawDateTime(round.drawDate, round.drawTime) }))
+    .sort((a, b) => {
+      if (a.drawAt && b.drawAt) return a.drawAt - b.drawAt;
+      return Number.parseFloat(a.round) - Number.parseFloat(b.round);
+    });
+
+  const now = new Date();
+  const activeRounds = sortedRounds.filter((round) => !round.drawAt || round.drawAt <= now);
+
+  return activeRounds.length > 0 ? activeRounds[activeRounds.length - 1] : sortedRounds[0];
+}
+
+function parseDrawDateTime(dateValue, timeValue) {
+  if (!dateValue) {
+    return null;
+  }
+
+  const isoDate = parseDrawDate(dateValue);
+  const time = parseDrawTime(timeValue || "08:30");
+
+  if (!isoDate) {
+    return null;
+  }
+
+  const parsed = new Date(`${isoDate}T${time}:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDrawTime(value) {
+  const text = cleanText(value).replace(".", ":");
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!match) {
+    return "08:30";
+  }
+
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function parseDrawDate(value) {
+  const text = cleanText(value);
+  const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}`;
+  }
+
+  const ukMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (ukMatch) {
+    return `${ukMatch[3]}-${ukMatch[2].padStart(2, "0")}-${ukMatch[1].padStart(2, "0")}`;
+  }
+
+  return "";
+}
+
+function compareTeamsForFairDraw(a, b) {
+  const aBlank = isBlankTeam(a);
+  const bBlank = isBlankTeam(b);
+
+  if (aBlank && !bBlank) return 1;
+  if (!aBlank && bBlank) return -1;
+
+  const scoreA = a.attendance === "" ? -Infinity : float(a.attendance);
+  const scoreB = b.attendance === "" ? -Infinity : float(b.attendance);
+
+  if (scoreB !== scoreA) {
+    return scoreB - scoreA;
+  }
+
+  return teamName(a).localeCompare(teamName(b));
+}
+
+function buildKnockoutMatchesFromOrderedTeams(teams, allowThreeTeamMatch = false) {
+  const matches = [];
+  let startIndex = 0;
+
+  if (allowThreeTeamMatch && teams.length % 2 === 1) {
+    const threeTeamMatch = teams.slice(0, 3);
+    matches.push({
+      matchNumber: matches.length + 1,
+      teams: threeTeamMatch.map((team) => ({
+        team: { yr: team.yr, h: team.h },
+        score: team.attendance,
+      })),
+      threeTeamMatch: true,
+    });
+    startIndex = 3;
+  } else if (teams.length % 2 === 1) {
+    matches.push({
+      matchNumber: matches.length + 1,
+      t1: { yr: teams[0].yr, h: teams[0].h },
+      t2: { yr: "", h: "BYE" },
+      s1: teams[0].attendance,
+      s2: "",
+      bye: true,
+    });
+    startIndex = 1;
+  }
+
+  for (let i = startIndex; i < teams.length; i += 2) {
+    const opponent = teams[i + 1] || {
+      yr: "",
+      h: "",
+      attendance: "",
+    };
+
+    matches.push({
+      matchNumber: matches.length + 1,
+      t1: { yr: teams[i].yr, h: teams[i].h },
+      t2: { yr: opponent.yr, h: opponent.h },
+      s1: teams[i].attendance,
+      s2: opponent.attendance,
+    });
+  }
+
+  return matches;
+}
+
+function buildMatchesFromOrderedTeams(teams) {
+  return buildKnockoutMatchesFromOrderedTeams(teams);
+}
+
+function buildFinalEntries(teams) {
+  return padTeamsToCount(teams, 2).slice(0, 2).map((team, index) => ({
+    matchNumber: index + 1,
+    t1: { yr: team.yr, h: team.h },
+    t2: { yr: "", h: "" },
+    s1: team.attendance,
+    s2: "",
+    finalEntry: true,
+  }));
+}
+
+function padTeamsToCount(teams, count) {
+  const paddedTeams = teams.slice(0, count);
+
+  while (paddedTeams.length < count) {
+    paddedTeams.push({ yr: "", h: "", attendance: "" });
+  }
+
+  return paddedTeams;
+}
+
+function isBlankTeam(team) {
+  return !team || (!team.yr && !team.h);
 }
 
 function setMatchesFromSheet(matches) {
@@ -544,6 +814,7 @@ function resetMatchIds() {
     match.s2 = match.s2 || "";
     match.id = index;
   });
+
 }
 
 function findColumn(headers, names) {
@@ -666,13 +937,13 @@ function easeBallBackToNormalSpeed() {
 function drawCentreDetails() {
   stroke(255, 255, 255, 90);
   strokeWeight(1.2);
-  line(CW / 2, 170, CW / 2, CH - 42);
+  line(CW / 2, 225, CW / 2, CH - 42);
   noStroke();
 
   const boxW = min(CW - 40, 780);
   const boxH = 172;
   const boxX = CW / 2 - boxW / 2;
-  const boxY = 12;
+  const boxY = 82;
 
   drawingContext.shadowColor = "rgba(0, 0, 0, 0.75)";
   drawingContext.shadowBlur = 22;
@@ -690,9 +961,8 @@ function drawCentreDetails() {
   textSize(64);
   textStyle(BOLD);
   textAlign(CENTER);
-  text("LAB", CW / 2, 58);
-  text("ATTENDANCE", CW / 2, 112);
-  text("WORLD CUP", CW / 2, 166);
+  text("ATTENDANCE", CW / 2, 152);
+  text("WORLD CUP", CW / 2, 214);
   textFont("Lexend");
   textStyle(NORMAL);
 }
@@ -728,11 +998,203 @@ function drawFocusGlow() {
   }
 }
 
+function drawBracketRounds() {
+  const finalRound = ROUND_GROUPS.length >= 4 ? ROUND_GROUPS[ROUND_GROUPS.length - 1] : null;
+  const sideRounds = finalRound ? ROUND_GROUPS.slice(0, -1) : ROUND_GROUPS;
+  const barWidth = min(150, max(104, CW * 0.095));
+  const barHeight = min(76, max(58, CH * 0.078));
+  const gap = 6;
+  const matchGap = 12;
+  const outerPad = 10;
+  const centerReserve = min(330, max(230, CW * 0.2));
+  const sideAvailable = (CW - centerReserve) / 2;
+  const roundStep =
+    sideRounds.length > 1
+      ? max(0, (sideAvailable - outerPad - barWidth) / (sideRounds.length - 1))
+      : 0;
+
+  sideRounds.forEach((group, roundIndex) => {
+    const splitAt = ceil(group.matches.length / 2);
+    const leftMatches = group.matches.slice(0, splitAt);
+    const rightMatches = group.matches.slice(splitAt);
+    const visualIndex = roundIndex;
+    const leftX = outerPad + visualIndex * roundStep;
+    const rightEdgeX = CW - outerPad - visualIndex * roundStep;
+
+    drawSideAt(leftMatches, leftX, true, barWidth, barHeight, gap, matchGap, 185, CH - 210);
+    drawSideAt(rightMatches, rightEdgeX, false, barWidth, barHeight, gap, matchGap, 185, CH - 210);
+  });
+
+  if (finalRound && finalRound.matches.length > 0) {
+    drawFinalRound(finalRound, barWidth, barHeight, gap);
+  }
+}
+
+function drawRoundLabel(label, x, y) {
+  fill(255);
+  noStroke();
+  textFont("Lexend");
+  textSize(16);
+  textStyle(BOLD);
+  textAlign(CENTER);
+  text(label, x, y);
+  textStyle(NORMAL);
+}
+
+function drawFinalRound(group, barWidth, barHeight, gap) {
+  const finalWidth = min(170, max(barWidth, CW * 0.105));
+  const x = CW / 2 - finalWidth / 2;
+  const finalTeams = group.matches
+    .map((match) => ({ team: match.t1, score: match.s1, match }))
+    .slice(0, 2);
+  const totalHeight = finalTeams.length * barHeight + max(0, finalTeams.length - 1) * gap;
+  const startY = CH / 2 - totalHeight / 2;
+
+  drawRoundLabel(`FINAL`, CW / 2, startY - 14);
+
+  finalTeams.forEach((entry, index) => {
+    const y = startY + index * (barHeight + gap);
+    const focused = entry.match.id === focusMatch;
+    teamBar(x, y, finalWidth, barHeight, entry.team, entry.score, true, false, false, focused);
+  });
+}
+
+function drawWinnersBanner() {
+  const winners = getCurrentWinners();
+
+  if (winners.length === 0) {
+    return;
+  }
+
+  const bannerH = 58;
+  const y = CH - bannerH - 16;
+  const label = winners.length === 1 ? "WINNER" : "WINNERS";
+  const names = winners.map((entry) => `${teamName(entry.team)} (${formatAttendance(entry.score)})`).join("   |   ");
+
+  drawingContext.shadowColor = "rgba(0, 0, 0, 0.7)";
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowOffsetX = 0;
+  drawingContext.shadowOffsetY = 5;
+  fill(0, 0, 0, 220);
+  noStroke();
+  rect(20, y, CW - 40, bannerH, 6);
+  drawingContext.shadowColor = "transparent";
+  drawingContext.shadowBlur = 0;
+  drawingContext.shadowOffsetX = 0;
+  drawingContext.shadowOffsetY = 0;
+
+  fill(255, 215, 40);
+  textFont("Lexend");
+  textStyle(BOLD);
+  textAlign(CENTER);
+  textSize(13);
+  text(label, CW / 2, y + 19);
+
+  fill(255);
+  textSize(19);
+  text(names, CW / 2, y + 43);
+  textStyle(NORMAL);
+}
+
+function getCurrentWinners() {
+  const groups = ROUND_GROUPS.length > 0 ? ROUND_GROUPS : [{ matches: ALL_MATCHES }];
+  const finalGroup = groups[groups.length - 1];
+
+  if (!finalGroup || finalGroup.matches.length === 0) {
+    return [];
+  }
+
+  const entries = finalGroup.matches
+    .flatMap(getMatchTeams)
+    .filter((entry) => !isBlankTeam(entry.team) && entry.score !== "");
+
+  if (entries.length < 2) {
+    return [];
+  }
+
+  const topScore = max(entries.map((entry) => float(entry.score)));
+
+  return entries.filter((entry) => float(entry.score) === topScore);
+}
+
+function getMatchTeams(match) {
+  if (match.threeTeamMatch) {
+    return match.teams;
+  }
+
+  if (match.finalEntry) {
+    return [{ team: match.t1, score: match.s1 }];
+  }
+
+  return [
+    { team: match.t1, score: match.s1 },
+    { team: match.t2, score: match.s2 },
+  ];
+}
+
+function formatAttendance(score) {
+  const value = float(score);
+  return Number.isNaN(value) ? "--" : `${value.toFixed(1)}%`;
+}
+
+function drawSideAt(matches, edgeX, isLeft, barWidth, barHeight, gap, matchGap, topY, availableH) {
+  const totalHeight =
+    matches.reduce((sum, match) => sum + matchHeight(match, barHeight, gap), 0) +
+    max(0, matches.length - 1) * matchGap;
+  const startY = topY + max(0, (availableH - totalHeight) / 2);
+  let y = startY;
+
+  matches.forEach((match) => {
+    const winner = getWinner(match);
+    const hasScores = match.s1 !== "" && match.s2 !== "";
+    const t1Wins = !match.threeTeamMatch && hasScores && winner === match.t1;
+    const t2Wins = !match.threeTeamMatch && hasScores && winner === match.t2;
+    const focused = match.id === focusMatch;
+    const x = isLeft ? edgeX : edgeX - barWidth;
+
+    if (match.threeTeamMatch) {
+      drawThreeTeamMatch(x, y, barWidth, barHeight, gap, match, isLeft, focused);
+    } else {
+      teamBar(x, y, barWidth, barHeight, match.t1, match.s1, isLeft, t1Wins, t2Wins, focused);
+      teamBar(x, y + barHeight + gap, barWidth, barHeight, match.t2, match.s2, isLeft, t2Wins, t1Wins, focused);
+    }
+    drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft, match);
+    y += matchHeight(match, barHeight, gap) + matchGap;
+  });
+}
+
+function drawThreeTeamMatch(x, y, barWidth, barHeight, gap, match, isLeft, focused) {
+  const scoredEntries = match.teams.filter((entry) => entry.score !== "" && !Number.isNaN(float(entry.score)));
+  const topScore = scoredEntries.length > 0 ? max(scoredEntries.map((entry) => float(entry.score))) : null;
+
+  match.teams.forEach((entry, index) => {
+    const isWin = topScore !== null && float(entry.score) === topScore;
+    const isLose = topScore !== null && !isWin && entry.score !== "";
+
+    teamBar(
+      x,
+      y + index * (barHeight + gap),
+      barWidth,
+      barHeight,
+      entry.team,
+      entry.score,
+      isLeft,
+      isWin,
+      isLose,
+      focused,
+    );
+  });
+}
+
+function matchHeight(match, barHeight, gap) {
+  return match.threeTeamMatch ? barHeight * 3 + gap * 2 : barHeight * 2 + gap;
+}
+
 function drawSide(matches, edgeX, isLeft) {
-  const barHeight = 48;
+  const barHeight = 64;
   const gap = 8;
-  const matchGap = 34;
-  const barWidth = min(360, max(250, CW * 0.28));
+  const matchGap = 24;
+  const barWidth = min(170, max(120, CW * 0.12));
   const totalHeight =
     matches.length * (barHeight * 2 + gap) + (matches.length - 1) * matchGap;
   const startY = (CH - totalHeight) / 2;
@@ -770,11 +1232,11 @@ function drawSide(matches, edgeX, isLeft) {
       t1Wins,
       focused,
     );
-    drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft);
+    drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft, match);
   });
 }
 
-function drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft) {
+function drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft, match) {
   const cx = isLeft ? edgeX + barWidth + 1 : edgeX - barWidth - 1;
   const y1 = y + barHeight / 2;
   const y2 = y + barHeight + gap + barHeight / 2;
@@ -782,8 +1244,9 @@ function drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft) {
   const arm = 16;
   const dir = isLeft ? 1 : -1;
 
-  stroke(192, 190, 184);
-  strokeWeight(1.6);
+  const connectorColour = getMatchConnectorColour(match);
+  stroke(connectorColour.r, connectorColour.g, connectorColour.b, 190);
+  strokeWeight(2);
   noFill();
 
   line(cx, y1, cx + arm * dir, y1);
@@ -795,26 +1258,74 @@ function drawBracketConnector(edgeX, y, barHeight, gap, barWidth, isLeft) {
   noStroke();
 }
 
+function getMatchConnectorColour(match) {
+  const team = match && match.t1 && !isBlankTeam(match.t1) ? match.t1 : null;
+  const houseColour = team ? HC[team.h] : null;
+
+  if (!houseColour) {
+    return { r: 192, g: 190, b: 184 };
+  }
+
+  return hexToRgb(houseColour.f);
+}
+
 function teamBar(x, y, w, h, team, score, isLeft, isWin, isLose, focused) {
+  if (team && team.h === "BYE") {
+    fill(0, 0, 0, 190);
+    stroke(255, 215, 40, 150);
+    strokeWeight(1.4);
+    rect(x, y, w, h, 6);
+    fill(255, 215, 40);
+    noStroke();
+    textSize(min(18, max(12, w * 0.12)));
+    textStyle(BOLD);
+    textAlign(CENTER);
+    text("BYE", x + w / 2, y + h / 2 + 5);
+    textStyle(NORMAL);
+    return;
+  }
+
+  if (isBlankTeam(team)) {
+    fill(20, 20, 20, 175);
+    stroke(255, 255, 255, 70);
+    strokeWeight(1.2);
+    rect(x, y, w, h, 6);
+    noStroke();
+    return;
+  }
+
   const houseColour = HC[team.h] || { f: "#cccccc", t: "#444444" };
   const fillColour = hexToRgb(houseColour.f);
   const textColour = hexToRgb(houseColour.t);
   const alpha = isLose ? 85 : 215;
 
-  fill(224, 222, 217, 170);
-  noStroke();
+  fill(fillColour.r, fillColour.g, fillColour.b, isLose ? 90 : 170);
+  stroke(fillColour.r, fillColour.g, fillColour.b, isLose ? 120 : 245);
+  strokeWeight(2);
   rect(x, y, w, h, 6);
 
   const percent = score === "" ? 0 : min(float(score) || 0, 100) / 100;
   const fillWidth = round(w * percent);
 
   if (fillWidth > 0) {
-    fill(fillColour.r, fillColour.g, fillColour.b, alpha + 25);
+    fill(fillColour.r, fillColour.g, fillColour.b, alpha);
+    noStroke();
     if (isLeft) {
       rect(x, y, fillWidth, h, 6);
     } else {
       rect(x + w - fillWidth, y, fillWidth, h, 6);
     }
+  }
+
+  if (isWin) {
+    noFill();
+    stroke(255, 215, 40, 235);
+    strokeWeight(3);
+    rect(x + 2, y + 2, w - 4, h - 4, 7);
+    stroke(255, 255, 255, 120);
+    strokeWeight(1.2);
+    rect(x + 5, y + 5, w - 10, h - 10, 5);
+    noStroke();
   }
 
   if (focused) {
@@ -826,80 +1337,42 @@ function teamBar(x, y, w, h, team, score, isLeft, isWin, isLose, focused) {
     noStroke();
   }
 
-  drawYearBadge(x, y, w, team, isLeft, fillColour, textColour);
-  drawHouseName(x, y, w, h, team, isLeft, isWin, textColour);
-  drawScore(x, y, w, h, score, isLeft, isWin, isLose);
+  drawHouseLogo(x, y, w, h, team, isLeft);
+  drawYearBadge(x, y, w, h, team, isLeft, fillColour, textColour);
 }
 
-function drawYearBadge(x, y, w, team, isLeft, fillColour, textColour) {
-  const badgeW = 40;
-  const badgeH = 24;
-  const badgeX = isLeft ? x + 6 : x + w - badgeW - 6;
+function drawHouseLogo(x, y, w, h, team, isLeft) {
+  const logo = houseLogos[team.h];
 
-  fill(fillColour.r, fillColour.g, fillColour.b, 210);
-  noStroke();
-  rect(badgeX, y + 6, badgeW, badgeH, 4);
+  if (!logo || logo.width <= 0) {
+    return;
+  }
 
+  const size = h * 0.9;
+  const logoX = isLeft ? x + size / 2 : x + w - size / 2;
+  const logoY = y + h / 2;
+
+  push();
+  imageMode(CENTER);
+  drawingContext.shadowColor = "rgba(0, 0, 0, 0.28)";
+  drawingContext.shadowBlur = 5;
+  drawingContext.shadowOffsetY = 2;
+  image(logo, logoX, logoY, size, size);
+  drawingContext.shadowColor = "transparent";
+  drawingContext.shadowBlur = 0;
+  drawingContext.shadowOffsetY = 0;
+  pop();
+}
+
+function drawYearBadge(x, y, w, h, team, isLeft, fillColour, textColour) {
   fill(textColour.r, textColour.g, textColour.b);
-  textSize(16);
+  textSize(min(22, max(16, h * 0.4)));
   textStyle(BOLD);
-  textAlign(CENTER);
-  text(`Y${team.yr}`, badgeX + badgeW / 2, y + 24);
-}
+  textAlign(isLeft ? RIGHT : LEFT, CENTER);
 
-function drawHouseName(x, y, w, h, team, isLeft, isWin, textColour) {
-  fill(textColour.r, textColour.g, textColour.b);
-  textSize(21);
-  textStyle(isWin ? BOLD : NORMAL);
-
-  if (isLeft) {
-    textAlign(LEFT);
-    text(team.h, x + 54, y + h / 2 + 8);
-  } else {
-    textAlign(RIGHT);
-    text(team.h, x + w - 54, y + h / 2 + 8);
+  if (team.h !== "BYE") {
+    text(`Y${team.yr}`, isLeft ? x + w - 10 : x + 10, y + h / 2);
   }
-
-  textStyle(NORMAL);
-}
-
-function drawScore(x, y, w, h, score, isLeft, isWin, isLose) {
-  if (score === "") {
-    return;
-  }
-
-  const scoreValue = float(score);
-
-  if (Number.isNaN(scoreValue)) {
-    return;
-  }
-
-  fill(isLose ? 150 : 30, isLose ? 148 : 28, isLose ? 144 : 24);
-  textSize(20);
-  textStyle(isWin ? BOLD : NORMAL);
-
-  if (isLeft) {
-    textAlign(RIGHT);
-    text(`${scoreValue.toFixed(1)}%`, x + w - 8, y + h / 2 + 8);
-  } else {
-    textAlign(LEFT);
-    text(`${scoreValue.toFixed(1)}%`, x + 8, y + h / 2 + 8);
-  }
-
-  if (isWin) {
-    fill(185, 152, 0);
-    textSize(22);
-
-    if (isLeft) {
-      textAlign(RIGHT);
-      text("*", x + w - 8, y + h / 2 + 8);
-    } else {
-      textAlign(LEFT);
-      text("*", x + 8, y + h / 2 + 8);
-    }
-  }
-
-  textStyle(NORMAL);
 }
 
 function drawFootball(x, y, r) {
@@ -954,10 +1427,22 @@ function drawFootball(x, y, r) {
 }
 
 function teamName(team) {
+  if (isBlankTeam(team)) {
+    return "";
+  }
+
+  if (team.h === "BYE") {
+    return "BYE";
+  }
+
   return `Y${team.yr} ${team.h}`;
 }
 
 function getWinner(match) {
+  if (match.threeTeamMatch) {
+    return null;
+  }
+
   if (match.s1 === "" || match.s2 === "") {
     return null;
   }
