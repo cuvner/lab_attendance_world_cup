@@ -1348,7 +1348,7 @@ function drawHouseLogo(x, y, w, h, team, isLeft) {
     return;
   }
 
-  const size = h * 0.9;
+  const size = h * 0.8;
   const logoX = isLeft ? x + size / 2 : x + w - size / 2;
   const logoY = y + h / 2;
 
