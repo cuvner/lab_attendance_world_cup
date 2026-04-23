@@ -3,7 +3,7 @@ const HC = {
   Anning: { f: "#2FB85F", t: "#063A1D" },
   Einstein: { f: "#E94B4B", t: "#5A0808" },
   Kahlo: { f: "#FAC775", t: "#633806" },
-  Attenborough: { f: "#97C459", t: "#27500A" },
+  Attenborough: { f: "#8E44AD", t: "#2B0B3F" },
   "Da Vinci": { f: "#3B82F6", t: "#082D63" },
 };
 
@@ -163,6 +163,7 @@ function loadAssets() {
   loadHouseLogo("Kahlo", ["images/Kahlo.png", "Kahlo.png"]);
   loadHouseLogo("Anning", ["images/Anning.png", "Anning.png"]);
   loadHouseLogo("Einstein", ["images/Einstein logo.png", "Einstein logo.png"]);
+  loadHouseLogo("Attenborough", ["images/attenborough.png", "attenborough.png"]);
 }
 
 function loadHouseLogo(house, paths) {
