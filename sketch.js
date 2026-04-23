@@ -56,6 +56,7 @@ let autoRotate = true;
 let lastTime = 0;
 let lastDataLoad = -Infinity;
 let loadingData = false;
+let sheetDataReady = false;
 let dataStatus = "Add your Google Sheet CSV URL in sketch.js";
 let animFrame = 0;
 
@@ -119,6 +120,11 @@ function loadGoogleFonts() {
 function draw() {
   drawGrassBackground();
   animFrame++;
+
+  if (!sheetDataReady && loadingData) {
+    drawLoadingScreen();
+    return;
+  }
 
   moveFootball();
 
@@ -265,6 +271,7 @@ async function loadAttendanceData() {
     const { updated, source } = await loadAndApplySheetRows();
     const loadedAt = new Date().toLocaleTimeString();
 
+    sheetDataReady = true;
     lastDataLoad = millis();
     dataStatus = `Loaded ${updated} matches and scores from Google Sheet at ${loadedAt} (${source}).`;
     updateDataStatus();
@@ -940,6 +947,15 @@ function drawCentreDetails() {
   line(CW / 2, 225, CW / 2, CH - 42);
   noStroke();
 
+  drawTitlePanel();
+}
+
+function drawLoadingScreen() {
+  drawTitlePanel();
+  drawFootball(CW / 2, CH / 2, min(56, max(34, min(CW, CH) * 0.07)));
+}
+
+function drawTitlePanel() {
   const boxW = min(CW - 40, 780);
   const boxH = 172;
   const boxX = CW / 2 - boxW / 2;
