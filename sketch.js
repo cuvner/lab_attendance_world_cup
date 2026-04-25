@@ -7,6 +7,23 @@ const HC = {
   "Da Vinci": { f: "#3B82F6", t: "#082D63" },
 };
 
+const HOUSE_NAME_ALIASES = {
+  aning: "Anning",
+  anning: "Anning",
+  einstien: "Einstein",
+  einstein: "Einstein",
+  kahlo: "Kahlo",
+  kahloo: "Kahlo",
+  attenborough: "Attenborough",
+  attenburough: "Attenborough",
+  attenbrough: "Attenborough",
+  attenborugh: "Attenborough",
+  attenboro: "Attenborough",
+  davinci: "Da Vinci",
+  davinci: "Da Vinci",
+  "da vinci": "Da Vinci",
+};
+
 // Default matches shown until the Google Sheet loads.
 let MATCHES_L = [
   { t1: { yr: 10, h: "Da Vinci" }, t2: { yr: 8, h: "Attenborough" } },
@@ -37,6 +54,7 @@ const KICK_SPEED = 9.5;
 const SPEED_RETURN_RATE = 0.965;
 const AUTO_SECS = 120;
 const DATA_REFRESH_SECS = 30;
+const MIN_LOADING_SCREEN_MS = 10000;
 let ZONE = { x1: 0, x2: CW, y1: 0, y2: CH };
 
 // Paste your published Google Sheet CSV link here.
@@ -57,6 +75,8 @@ let lastTime = 0;
 let lastDataLoad = -Infinity;
 let loadingData = false;
 let sheetDataReady = false;
+let initialLoadSettled = false;
+let initialLoadingStartedAt = 0;
 let dataStatus = "Add your Google Sheet CSV URL in sketch.js";
 let animFrame = 0;
 
@@ -81,6 +101,7 @@ function setup() {
   }
   textFont("Lexend, system-ui, sans-serif");
   frameRate(30);
+  initialLoadingStartedAt = millis();
 
   loadAssets();
   lastTime = millis();
@@ -121,7 +142,7 @@ function draw() {
   drawGrassBackground();
   animFrame++;
 
-  if (!sheetDataReady && loadingData) {
+  if (shouldShowLoadingScreen()) {
     drawLoadingScreen();
     return;
   }
@@ -257,6 +278,8 @@ function maybeRefreshAttendanceData() {
 }
 
 async function loadAttendanceData() {
+  const isInitialLoad = lastDataLoad === -Infinity;
+
   if (!GOOGLE_SHEET_CSV_URL) {
     dataStatus =
       "Add your published Google Sheet CSV URL in sketch.js to load attendance automatically.";
@@ -282,7 +305,19 @@ async function loadAttendanceData() {
   } finally {
     lastDataLoad = millis();
     loadingData = false;
+
+    if (isInitialLoad) {
+      initialLoadSettled = true;
+    }
   }
+}
+
+function shouldShowLoadingScreen() {
+  if (!initialLoadSettled) {
+    return true;
+  }
+
+  return millis() - initialLoadingStartedAt < MIN_LOADING_SCREEN_MS;
 }
 
 async function loadAndApplySheetRows() {
@@ -525,8 +560,8 @@ function applyExplicitMatchRows(rows, headers) {
     const matchNumber = Number.parseInt(row[matchCol], 10);
     const team1Year = Number.parseInt(row[team1YearCol], 10);
     const team2Year = Number.parseInt(row[team2YearCol], 10);
-    const team1House = cleanText(row[team1HouseCol]);
-    const team2House = cleanText(row[team2HouseCol]);
+    const team1House = canonicaliseHouseName(row[team1HouseCol]);
+    const team2House = canonicaliseHouseName(row[team2HouseCol]);
 
     if (
       !matchNumber ||
@@ -572,7 +607,7 @@ function applyRoundTeamRows(rows, headers) {
     const row = rows[i];
     const round = cleanText(row[roundCol]);
     const teamYear = Number.parseInt(row[teamYearCol], 10);
-    const teamHouse = cleanText(row[teamHouseCol]);
+    const teamHouse = canonicaliseHouseName(row[teamHouseCol]);
 
     if (!round) {
       continue;
@@ -848,6 +883,89 @@ function cleanScore(value) {
 
 function cleanText(value) {
   return String(value || "").trim();
+}
+
+function canonicaliseHouseName(value) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  if (text.toUpperCase() === "BYE") {
+    return "BYE";
+  }
+
+  const directAlias = HOUSE_NAME_ALIASES[normaliseNameToken(text)];
+  if (directAlias) {
+    return directAlias;
+  }
+
+  const knownHouses = Object.keys(HC);
+  const exactMatch = knownHouses.find(
+    (house) => normaliseNameToken(house) === normaliseNameToken(text),
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  let bestMatch = "";
+  let bestDistance = Infinity;
+  const target = normaliseNameToken(text);
+
+  knownHouses.forEach((house) => {
+    const distance = levenshteinDistance(target, normaliseNameToken(house));
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = house;
+    }
+  });
+
+  const maxDistance = target.length >= 9 ? 3 : 2;
+  return bestDistance <= maxDistance ? bestMatch : text;
+}
+
+function normaliseNameToken(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+}
+
+function levenshteinDistance(a, b) {
+  if (a === b) {
+    return 0;
+  }
+
+  if (!a.length) {
+    return b.length;
+  }
+
+  if (!b.length) {
+    return a.length;
+  }
+
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+
+  for (let i = 0; i < a.length; i++) {
+    let diagonal = previous[0];
+    previous[0] = i + 1;
+
+    for (let j = 0; j < b.length; j++) {
+      const saved = previous[j + 1];
+      const substitutionCost = a[i] === b[j] ? 0 : 1;
+
+      previous[j + 1] = min(
+        previous[j + 1] + 1,
+        previous[j] + 1,
+        diagonal + substitutionCost,
+      );
+
+      diagonal = saved;
+    }
+  }
+
+  return previous[b.length];
 }
 
 function normaliseSide(value) {
@@ -1314,14 +1432,14 @@ function teamBar(x, y, w, h, team, score, isLeft, isWin, isLose, focused) {
   const houseColour = HC[team.h] || { f: "#cccccc", t: "#444444" };
   const fillColour = hexToRgb(houseColour.f);
   const textColour = hexToRgb(houseColour.t);
-  const alpha = isLose ? 85 : 215;
+  const alpha = isLose ? 111 : 255;
 
-  fill(fillColour.r, fillColour.g, fillColour.b, isLose ? 90 : 170);
+  fill(fillColour.r, fillColour.g, fillColour.b, isLose ? 117 : 221);
   stroke(fillColour.r, fillColour.g, fillColour.b, isLose ? 120 : 245);
   strokeWeight(2);
   rect(x, y, w, h, 6);
 
-  const percent = score === "" ? 0 : min(float(score) || 0, 100) / 100;
+  const percent = scoreToFillPercent(score);
   const fillWidth = round(w * percent);
 
   if (fillWidth > 0) {
@@ -1354,11 +1472,78 @@ function teamBar(x, y, w, h, team, score, isLeft, isWin, isLose, focused) {
     noStroke();
   }
 
-  drawHouseLogo(x, y, w, h, team, isLeft);
-  drawYearBadge(x, y, w, h, team, isLeft, fillColour, textColour);
+  drawHouseLogo(x, y, w, h, team, score, isLeft);
+  drawYearBadge(x, y, w, h, team, score, isLeft, fillColour, textColour);
 }
 
-function drawHouseLogo(x, y, w, h, team, isLeft) {
+function scoreToFillPercent(score) {
+  if (score === "") {
+    return 0;
+  }
+
+  const value = float(score);
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+
+  const visibleScores = getVisibleScores();
+  if (visibleScores.length < 2) {
+    return constrain(value / 100, 0, 1);
+  }
+
+  const minScore = min(visibleScores);
+  const maxScore = max(visibleScores);
+  const range = maxScore - minScore;
+
+  if (range < 0.01) {
+    return 0.8;
+  }
+
+  const normalised = constrain((value - minScore) / range, 0, 1);
+  return 0.2 + normalised * 0.8;
+}
+
+function getVisibleScores() {
+  const scores = [];
+
+  if (ROUND_GROUPS.length > 1) {
+    ROUND_GROUPS.forEach((group) => {
+      group.matches.forEach((match) => {
+        if (match.threeTeamMatch) {
+          match.teams.forEach((entry) => {
+            const value = float(entry.score);
+            if (entry.score !== "" && !Number.isNaN(value)) {
+              scores.push(value);
+            }
+          });
+          return;
+        }
+
+        [match.s1, match.s2].forEach((score) => {
+          const value = float(score);
+          if (score !== "" && !Number.isNaN(value)) {
+            scores.push(value);
+          }
+        });
+      });
+    });
+
+    return scores;
+  }
+
+  ALL_MATCHES.forEach((match) => {
+    [match.s1, match.s2].forEach((score) => {
+      const value = float(score);
+      if (score !== "" && !Number.isNaN(value)) {
+        scores.push(value);
+      }
+    });
+  });
+
+  return scores;
+}
+
+function drawHouseLogo(x, y, w, h, team, score, isLeft) {
   const logo = houseLogos[team.h];
 
   if (!logo || logo.width <= 0) {
@@ -1381,15 +1566,34 @@ function drawHouseLogo(x, y, w, h, team, isLeft) {
   pop();
 }
 
-function drawYearBadge(x, y, w, h, team, isLeft, fillColour, textColour) {
+function drawYearBadge(x, y, w, h, team, score, isLeft, fillColour, textColour) {
+  const labelX = isLeft ? x + w - 10 : x + 10;
+
   fill(textColour.r, textColour.g, textColour.b);
   textSize(min(22, max(16, h * 0.4)));
   textStyle(BOLD);
   textAlign(isLeft ? RIGHT : LEFT, CENTER);
 
   if (team.h !== "BYE") {
-    text(`Y${team.yr}`, isLeft ? x + w - 10 : x + 10, y + h / 2);
+    text(`Y${team.yr}`, labelX, y + h / 2 - 9);
   }
+
+  if (score !== "") {
+    fill(255, 255, 255, 240);
+    textSize(min(13, max(10, h * 0.2)));
+    textStyle(NORMAL);
+    text(`${formatAttendanceLabel(score)}%`, labelX, y + h / 2 + 11);
+  }
+}
+
+function formatAttendanceLabel(score) {
+  const value = float(score);
+
+  if (Number.isNaN(value)) {
+    return String(score).trim();
+  }
+
+  return value.toFixed(1);
 }
 
 function drawFootball(x, y, r) {
